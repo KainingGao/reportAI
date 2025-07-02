@@ -218,7 +218,7 @@ export default function SafetyReportPage() {
             if (!apiResponse.ok) {
               const errorData = await apiResponse.json();
               throw new Error(
-                `API请求失败: ${apiResponse.status} ${apiResponse.statusText}`
+                `API请求失败: ${apiResponse.status} ${apiResponse.statusText} - ${JSON.stringify(errorData)}`
               );
             }
 
