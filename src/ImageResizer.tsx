@@ -1,6 +1,5 @@
 import { useState } from "react";
 import JSZip from "jszip";
-import { saveAs } from "file-saver";
 import "./styles.css";
 
 interface ProcessedFile {

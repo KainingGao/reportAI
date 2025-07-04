@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import * as mammoth from "mammoth";
 import * as ExcelJS from "exceljs";
 import "./styles.css";
@@ -99,8 +99,8 @@ export default function SafetyReportPage() {
       }))
     );
 
-    // Parse the schedule mapping
-    const mappings = parseScheduleMapping(scheduleMappingText);
+    // Parse the schedule mapping (for future use)
+    // const mappings = parseScheduleMapping(scheduleMappingText);
 
     try {
       await Promise.all(
