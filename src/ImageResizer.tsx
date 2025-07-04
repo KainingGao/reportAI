@@ -351,18 +351,45 @@ export default function ImageResizer() {
     processDocFiles();
   };
 
-  const downloadAll = () => {
-    processedFiles.forEach((processedFile, index) => {
-      if (processedFile.status === "completed" && processedFile.downloadUrl) {
-        const fileName = files[index].name.replace(/\.docx$/i, `_resized_${width}x${height}${unit}.docx`);
-        const link = document.createElement('a');
-        link.href = processedFile.downloadUrl;
-        link.download = fileName;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
+  const downloadAll = async () => {
+    const completedFiles = processedFiles.filter((pf, index) => 
+      pf.status === "completed" && pf.downloadUrl
+    );
+    
+    if (completedFiles.length === 0) return;
+    
+    // Add loading state for download all
+    setIsProcessing(true);
+    
+    try {
+      for (let i = 0; i < completedFiles.length; i++) {
+        const processedFile = completedFiles[i];
+        const originalIndex = processedFiles.findIndex(pf => pf === processedFile);
+        
+        if (processedFile.downloadUrl) {
+          const fileName = files[originalIndex].name.replace(/\.docx$/i, `_resized_${width}x${height}${unit}.docx`);
+          const link = document.createElement('a');
+          link.href = processedFile.downloadUrl;
+          link.download = fileName;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          
+          // Add delay between downloads to prevent browser blocking
+          // Only add delay if there are more files to download
+          if (i < completedFiles.length - 1) {
+            await new Promise(resolve => setTimeout(resolve, 500)); // 500ms delay
+          }
+        }
       }
-    });
+      
+      alert(`成功开始下载 ${completedFiles.length} 个文件！`);
+    } catch (error) {
+      console.error('Download error:', error);
+      alert('下载过程中出现错误，请重试');
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   const renderStatusBadge = (status: string, error?: string) => {
