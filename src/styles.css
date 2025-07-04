@@ -1014,4 +1014,37 @@ table tbody tr:hover {
 
 .file-result:hover {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+/* New simplified file display styles */
+.file-names-container {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.file-item-simple {
+  background: #f8f9fa;
+  border: 1px solid #e5e5e7;
+  border-radius: 8px;
+  padding: 0.875rem;
+  transition: all 0.2s ease;
+}
+
+.file-item-simple:hover {
+  background: #f0f9ff;
+  border-color: #007aff;
+}
+
+.file-item-simple .file-name {
+  font-weight: 500;
+  color: #1d1d1f;
+  margin-bottom: 0.25rem;
+  font-size: 0.9rem;
+}
+
+.file-item-simple .file-date {
+  font-size: 0.8rem;
+  color: #6e6e73;
+  font-weight: 400;
 } 

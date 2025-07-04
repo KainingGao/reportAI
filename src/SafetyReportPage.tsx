@@ -3,18 +3,17 @@ import * as mammoth from "mammoth";
 import * as ExcelJS from "exceljs";
 import "./styles.css";
 
-// Add interface for per-file settings
-interface FileSettings {
+// Add interface for the new mapping format
+interface ScheduleMapping {
+  plannedDate: string;
   region: string;
-  plannedCheckDate: string;
-  actualCheckDate: string;
   town: string;
+  factoryName: string;
+  tenant: string;
 }
 
 export default function SafetyReportPage() {
   const [files, setFiles] = useState<File[]>([]);
-  // Add state for per-file settings
-  const [fileSettings, setFileSettings] = useState<Record<number, FileSettings>>({});
   const [responses, setResponses] = useState<
     Array<{
       fileName: string;
@@ -27,13 +26,8 @@ export default function SafetyReportPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [globalError, setGlobalError] = useState<string | null>(null);
 
-  // State for user inputs
-  const [region, setRegion] = useState("张家港");
-  const [town, setTown] = useState("经开区");
-  const [factoryMappingText, setFactoryMappingText] = useState("");
-  const [checkDate, setCheckDate] = useState(
-    new Date().toLocaleDateString("zh-CN")
-  );
+  // Update state for user inputs - remove individual settings, keep only the new mapping
+  const [scheduleMappingText, setScheduleMappingText] = useState("");
 
   const [copiedAnnex1, setCopiedAnnex1] = useState(false);
   const [copiedAnnex2, setCopiedAnnex2] = useState(false);
@@ -44,64 +38,41 @@ export default function SafetyReportPage() {
   const annex2Header =
     "核查机构名称\t地区\t厂中厂名称\t核查时间\t存在问题\t重大隐患数量\t一般隐患数量\t隐患总数量\t现场隐患\t管理隐患\t是否属于涉爆粉尘、金属熔融企业";
 
-  // Helper function to get file settings with defaults
-  const getFileSettings = (index: number): FileSettings => {
-    return fileSettings[index] || {
-      region: region,
-      plannedCheckDate: checkDate,
-      actualCheckDate: checkDate,
-      town: town
-    };
-  };
-
-  // Helper function to update file settings
-  const updateFileSetting = (index: number, field: keyof FileSettings, value: string) => {
-    setFileSettings(prev => ({
-      ...prev,
-      [index]: {
-        ...getFileSettings(index),
-        [field]: value
+  // Helper function to parse the schedule mapping
+  const parseScheduleMapping = (text: string): ScheduleMapping[] => {
+    if (!text.trim()) return [];
+    
+    const lines = text.split('\n').filter(line => line.trim());
+    return lines.map(line => {
+      const parts = line.split('->').map(part => part.trim());
+      if (parts.length >= 4) {
+        const [plannedDate, regionTown, factoryName, tenant] = parts;
+        const [region, town] = regionTown.includes('/') 
+          ? regionTown.split('/').map(s => s.trim())
+          : [regionTown, regionTown]; // fallback if no slash
+        
+        return {
+          plannedDate,
+          region,
+          town,
+          factoryName,
+          tenant
+        };
       }
-    }));
+      return null;
+    }).filter(Boolean) as ScheduleMapping[];
   };
 
-  // Update file settings when global values change
-  useEffect(() => {
-    if (files.length > 0) {
-      setFileSettings(prev => {
-        const updated: Record<number, FileSettings> = {};
-        files.forEach((_, index) => {
-          const currentSettings = prev[index];
-          // Only update if the setting hasn't been manually changed
-          // We consider it manually changed if it differs from the old global values
-          updated[index] = {
-            region: currentSettings?.region || region,
-            plannedCheckDate: currentSettings?.plannedCheckDate || checkDate,
-            actualCheckDate: currentSettings?.actualCheckDate || checkDate,
-            town: currentSettings?.town || town
-          };
-        });
-        return updated;
-      });
-    }
-  }, [region, checkDate, town, files.length]);
+  // Helper function to get file last modified date
+  const getFileActualDate = (file: File): string => {
+    const date = new Date(file.lastModified);
+    return date.toISOString().split('T')[0]; // Format as YYYY-MM-DD
+  };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       const newFiles = Array.from(e.target.files).slice(0, 30);
       setFiles(newFiles);
-
-             // Initialize file settings with current global values
-       const newFileSettings: Record<number, FileSettings> = {};
-       newFiles.forEach((_, index) => {
-         newFileSettings[index] = {
-           region: region,
-           plannedCheckDate: checkDate,
-           actualCheckDate: checkDate,
-           town: town
-         };
-       });
-      setFileSettings(newFileSettings);
 
       setResponses(
         newFiles.map((file) => ({
@@ -128,6 +99,9 @@ export default function SafetyReportPage() {
       }))
     );
 
+    // Parse the schedule mapping
+    const mappings = parseScheduleMapping(scheduleMappingText);
+
     try {
       await Promise.all(
         files.map(async (file, index) => {
@@ -135,10 +109,10 @@ export default function SafetyReportPage() {
             // 从DOCX中提取文本
             const extractedText = await extractTextFromDocx(file);
 
-            // Get file-specific settings
-            const currentFileSettings = getFileSettings(index);
+            // Get file's actual check date from metadata
+            const actualCheckDate = getFileActualDate(file);
 
-            // 准备prompt
+            // 准备prompt with the new mapping format
             const prompt = `请根据以下文档内容和安全检查信息，严格按照以下格式返回数据：
 
               第一部分（附件1）：
@@ -161,11 +135,12 @@ export default function SafetyReportPage() {
               
 
               当前信息：
-              - 区域: ${currentFileSettings.region}
-              - 镇/街道: ${currentFileSettings.town}
-              - 预计核查/核查时间: ${currentFileSettings.plannedCheckDate}
-              - 实际核查时间: ${currentFileSettings.actualCheckDate}
-              - 厂中厂映射关系: ${factoryMappingText || "无"},假如在这个列表里找不到厂中厂，则使用出租方名称当作厂中厂名称
+              - 实际核查时间: ${actualCheckDate}
+              - 计划安排信息（格式：计划核查日期->区域/镇街道->厂中厂名称->承租方）:
+              ${scheduleMappingText}
+              
+              请根据文档内容中找到的承租方或厂中厂名称，匹配上述计划安排信息来确定：区域、镇/街道、厂中厂名称、计划核查时间。
+              如果在计划安排中找不到匹配的信息，请根据文档内容尽量推断这些信息。
 
               文档内容：
               ${extractedText.substring(0, 40000)}
@@ -173,16 +148,17 @@ export default function SafetyReportPage() {
               在返回时，请在第一部分和第二部分之间添加一行，内容为四个大写字母：XXXX
 
               返回例子1：
-              张家港	经开区	张家港市杨舍镇农联村股份经济合作社	张家港市海达兴纺机有限公司	2025/6/23	2025/6/23
+              张家港	经开区	张家港市杨舍镇农联村股份经济合作社	张家港市海达兴纺机有限公司	2025-6-23	${actualCheckDate}
               XXXX
-              常州市安平安全技术服务有限公司	张家港	农联村村级租用厂房	2025.6.23	出租方：张家港市杨舍镇农联村股份经济合作社 1、8楼安全出口指示灯不亮 承租方：苏州凡赛特材料科技有限公司1、9楼安全出口指示灯不亮 2、消火栓箱未见点检记录 3、消火栓箱未张贴操作说明 4、注塑机安全风险告知牌未划分风险等级和未明确管理责任人员	0	15	15	14	1	否
+              常州市安平安全技术服务有限公司	张家港	农联村村级租用厂房	${actualCheckDate}	出租方：张家港市杨舍镇农联村股份经济合作社 1、8楼安全出口指示灯不亮 承租方：苏州凡赛特材料科技有限公司1、9楼安全出口指示灯不亮 2、消火栓箱未见点检记录 3、消火栓箱未张贴操作说明 4、注塑机安全风险告知牌未划分风险等级和未明确管理责任人员	0	15	15	14	1	否
 
               返回例子2：
-              张家港	经开区	张家港市杨舍镇徐丰村股份经济合作社	张家港市创新线业有限公司	2025/6/23	2025/6/23"
+              张家港	经开区	张家港市杨舍镇徐丰村股份经济合作社	张家港市创新线业有限公司	2025-6-23	${actualCheckDate}
               XXXX
-              常州市安平安全技术服务有限公司	张家港	徐丰村村级租用厂房	2025.6.23	出租方：张家港市杨舍镇徐丰村股份经济合作社 1、出租方公告栏内各企业较大风险未更新 2、出租方公告栏内各企业安全风险四色图未更新 承租方;张家港市创新线业有限公司 1、货架未见限重标识 2、消火栓箱内放置灭火器 3、车间内通道堵塞 4、配电盒未张贴警示标识 5、电缆槽盒未跨接 6、绝缘胶垫未见检测合格标签 7、灭火器箱前堆放杂物 8、防腐剂放置点未见MSDS 9、较大风险公告栏未及时更新 10、清洁剂使用完放置在车间现场	0	12	12	10	2	否
+              常州市安平安全技术服务有限公司	张家港	徐丰村村级租用厂房	${actualCheckDate}	出租方：张家港市杨舍镇徐丰村股份经济合作社 1、出租方公告栏内各企业较大风险未更新 2、出租方公告栏内各企业安全风险四色图未更新 承租方;张家港市创新线业有限公司 1、货架未见限重标识 2、消火栓箱内放置灭火器 3、车间内通道堵塞 4、配电盒未张贴警示标识 5、电缆槽盒未跨接 6、绝缘胶垫未见检测合格标签 7、灭火器箱前堆放杂物 8、防腐剂放置点未见MSDS 9、较大风险公告栏未及时更新 10、清洁剂使用完放置在车间现场	0	12	12	10	2	否
               
               //所以你的回答只应该有像这样的三行，不要再有其他东西了
+              //日期格式统一用2025-xx-xx
               `;
 
             // 准备API负载
@@ -635,42 +611,12 @@ export default function SafetyReportPage() {
             <h2>基本信息填写</h2>
 
             <div className="input-group">
-              <label>区域:</label>
-              <input
-                type="text"
-                value={region}
-                onChange={(e) => setRegion(e.target.value)}
-                required
-              />
-            </div>
-
-            <div className="input-group">
-              <label>镇/街道:</label>
-              <input
-                type="text"
-                value={town}
-                onChange={(e) => setTown(e.target.value)}
-                required
-              />
-            </div>
-
-            <div className="input-group">
-              <label>核查时间:</label>
-              <input
-                type="date"
-                value={checkDate}
-                onChange={(e) => setCheckDate(e.target.value)}
-                required
-              />
-            </div>
-
-            <div className="input-group">
-              <label>厂中厂映射关系:</label>
+              <label>计划安排信息 (格式: 计划核查日期-&gt;区域/镇街道-&gt;厂中厂名称-&gt;承租方):</label>
               <textarea
-                value={factoryMappingText}
-                onChange={(e) => setFactoryMappingText(e.target.value)}
-                placeholder="例如: 张家港市杨舍镇农联村股份经济合作社 → 农联村村级租用厂房"
-                rows={3}
+                value={scheduleMappingText}
+                onChange={(e) => setScheduleMappingText(e.target.value)}
+                placeholder="例如:&#10;2025/6/23-&gt;张家港/经开区-&gt;农联村村级租用厂房-&gt;张家港市海达兴纺机有限公司&#10;2025/6/24-&gt;张家港/经开区-&gt;徐丰村村级租用厂房-&gt;张家港市创新线业有限公司&#10;每行一个计划，实际核查日期将自动使用文件的最后修改时间"
+                rows={5}
               />
             </div>
           </div>
@@ -686,56 +632,18 @@ export default function SafetyReportPage() {
               multiple
               required
             />
-            {files.length > 0 && (
+                        {files.length > 0 && (
               <div className="file-list">
                 <p>已选择文件 ({files.length}):</p>
-                <div className="file-settings-container">
-                  {files.map((file, index) => {
-                    const settings = getFileSettings(index);
-                    return (
-                      <div key={index} className="file-item">
-                        <div className="file-name">{file.name}</div>
-                        <div className="file-settings">
-                          <div className="setting-group">
-                            <label>区域:</label>
-                            <input
-                              type="text"
-                              value={settings.region}
-                              onChange={(e) => updateFileSetting(index, 'region', e.target.value)}
-                              disabled={isLoading}
-                            />
-                          </div>
-                          <div className="setting-group">
-                            <label>镇/街道:</label>
-                            <input
-                              type="text"
-                              value={settings.town}
-                              onChange={(e) => updateFileSetting(index, 'town', e.target.value)}
-                              disabled={isLoading}
-                            />
-                          </div>
-                          <div className="setting-group">
-                            <label>计划核查时间:</label>
-                            <input
-                              type="date"
-                              value={settings.plannedCheckDate}
-                              onChange={(e) => updateFileSetting(index, 'plannedCheckDate', e.target.value)}
-                              disabled={isLoading}
-                            />
-                          </div>
-                          <div className="setting-group">
-                            <label>实际核查时间:</label>
-                            <input
-                              type="date"
-                              value={settings.actualCheckDate}
-                              onChange={(e) => updateFileSetting(index, 'actualCheckDate', e.target.value)}
-                              disabled={isLoading}
-                            />
-                          </div>
-                        </div>
+                <div className="file-names-container">
+                  {files.map((file, index) => (
+                    <div key={index} className="file-item-simple">
+                      <div className="file-name">{file.name}</div>
+                      <div className="file-date">
+                        实际核查日期: {getFileActualDate(file)}
                       </div>
-                    );
-                  })}
+                    </div>
+                  ))}
                 </div>
               </div>
             )}
