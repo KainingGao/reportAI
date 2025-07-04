@@ -38,8 +38,8 @@ export default function SafetyReportPage() {
   const annex2Header =
     "核查机构名称\t地区\t厂中厂名称\t核查时间\t存在问题\t重大隐患数量\t一般隐患数量\t隐患总数量\t现场隐患\t管理隐患\t是否属于涉爆粉尘、金属熔融企业";
 
-  // Helper function to parse the schedule mapping
-  const parseScheduleMapping = (text: string): ScheduleMapping[] => {
+  // Helper function to parse the schedule mapping (commented out for now)
+  /* const parseScheduleMapping = (text: string): ScheduleMapping[] => {
     if (!text.trim()) return [];
     
     const lines = text.split('\n').filter(line => line.trim());
@@ -61,7 +61,7 @@ export default function SafetyReportPage() {
       }
       return null;
     }).filter(Boolean) as ScheduleMapping[];
-  };
+  }; */
 
   // Helper function to get file last modified date
   const getFileActualDate = (file: File): string => {
