@@ -3,14 +3,14 @@ import * as mammoth from "mammoth";
 import * as ExcelJS from "exceljs";
 import "./styles.css";
 
-// Add interface for the new mapping format
-interface ScheduleMapping {
+// Add interface for the new mapping format (commented out for now)
+/* interface ScheduleMapping {
   plannedDate: string;
   region: string;
   town: string;
   factoryName: string;
   tenant: string;
-}
+} */
 
 export default function SafetyReportPage() {
   const [files, setFiles] = useState<File[]>([]);
