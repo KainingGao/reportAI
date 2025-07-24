@@ -384,8 +384,12 @@ export default function SafetyReportPage() {
             const dataRow = annex1Sheet.addRow(row);
             dataRow.alignment = { vertical: "middle", wrapText: true };
             // Set font for all cells in row
-            dataRow.eachCell((cell: any) => {
+            dataRow.eachCell((cell: any, colNumber: number) => {
               cell.font = { name: "宋体", size: 9 };
+              // Center-align date columns (5 and 6, 1-based)
+              if (colNumber === 5 || colNumber === 6) {
+                cell.alignment = { ...cell.alignment, horizontal: "center" };
+              }
             });
           }
         });
@@ -456,19 +460,33 @@ export default function SafetyReportPage() {
         lines.forEach((line) => {
           if (line.trim()) {
             const row = line.split("\t");
-            const dataRow = annex2Sheet.addRow(row);
-            dataRow.alignment = { vertical: "middle", wrapText: true };
-            
-            // Set font for all cells in row
-            dataRow.eachCell((cell: any) => {
-              cell.font = { name: "宋体", size: 9 };
+            // Convert numeric columns to numbers
+            // Numeric columns: 重大隐患数量(5), 一般隐患数量(6), 隐患总数量(7), 现场隐患(8), 管理隐患(9)
+            const processedRow = row.map((value, index) => {
+              if ([5, 6, 7, 8, 9].includes(index)) {
+                const numValue = parseInt(value);
+                return isNaN(numValue) ? 0 : numValue;
+              }
+              return value;
             });
-            
+            const dataRow = annex2Sheet.addRow(processedRow);
+            dataRow.alignment = { vertical: "middle", wrapText: true };
+            // Set font for all cells in row
+            dataRow.eachCell((cell: any, colNumber: number) => {
+              cell.font = { name: "宋体", size: 9 };
+              // Set number format for numeric columns
+              if ([6, 7, 8, 9, 10].includes(cell.col)) { // 1-based indexing for columns
+                cell.numFmt = '0';
+              }
+              // Center-align date (4) and number columns (6-10, 1-based)
+              if (colNumber === 4 || [6, 7, 8, 9, 10].includes(colNumber)) {
+                cell.alignment = { ...cell.alignment, horizontal: "center" };
+              }
+            });
             // Special formatting for the "存在问题" column (index 4)
             if (row[4]) {
               const issueCell = dataRow.getCell(5);
               issueCell.alignment = { vertical: "top", wrapText: true };
-              
               // Create rich text with bold landlord/tenant names
               const issuesText = row[4];
               const richText = createRichTextForIssues(issuesText);
