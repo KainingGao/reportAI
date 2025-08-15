@@ -10,6 +10,13 @@ interface ProcessedFile {
   message?: string;
 }
 
+interface DocxProcessResult {
+  buffer: ArrayBuffer;
+  processedImages: number;
+  failedImages: number;
+  totalMediaFiles: number;
+}
+
 export default function ImageResizer() {
   const [files, setFiles] = useState<File[]>([]);
   const [width, setWidth] = useState<string>("3.8");
@@ -21,10 +28,10 @@ export default function ImageResizer() {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
       const selectedFiles = Array.from(e.target.files);
-      const validFiles = selectedFiles.filter(file => /\.(doc|docx)$/i.test(file.name));
+      const validFiles = selectedFiles.filter(file => /(\.doc|\.docx|\.zip|\.7z)$/i.test(file.name));
       
       if (validFiles.length === 0) {
-        alert('请选择 .doc 或 .docx 文件');
+        alert('请选择 .doc/.docx/.zip/.7z 文件');
         return;
       }
       
@@ -97,18 +104,11 @@ export default function ImageResizer() {
         canvas.height = targetHeight;
         
         if (ctx) {
-          // Clear the canvas
           ctx.clearRect(0, 0, targetWidth, targetHeight);
-          
-          // Set high quality rendering
           ctx.imageSmoothingEnabled = true;
           ctx.imageSmoothingQuality = 'high';
-          
-          // Draw the resized image
           ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
-          
           console.log(`Drawing image to canvas: ${targetWidth}x${targetHeight}, format: ${mimeType}`);
-          
           canvas.toBlob((blob) => {
             if (blob) {
               console.log(`Converted to blob: ${blob.size} bytes, type: ${blob.type}`);
@@ -130,20 +130,132 @@ export default function ImageResizer() {
         reject(new Error('Failed to load image'));
       };
       
-             const blob = new Blob([imageBuffer]);
-       const imageUrl = URL.createObjectURL(blob);
-       console.log(`Loading image from blob URL, original size: ${imageBuffer.byteLength} bytes`);
-       img.src = imageUrl;
-       
-       // Store the original onload function
-       const originalOnload = img.onload;
-       img.onload = (event) => {
-         URL.revokeObjectURL(imageUrl);
-         if (originalOnload) {
-           originalOnload.call(img, event);
-         }
-       };
+      const blob = new Blob([imageBuffer]);
+      const imageUrl = URL.createObjectURL(blob);
+      console.log(`Loading image from blob URL, original size: ${imageBuffer.byteLength} bytes`);
+      img.src = imageUrl;
+      
+      const originalOnload = img.onload;
+      img.onload = (event) => {
+        URL.revokeObjectURL(imageUrl);
+        if (originalOnload) {
+          originalOnload.call(img, event);
+        }
+      };
     });
+  };
+
+  const getBaseName = (path: string): string => {
+    const parts = path.split('/');
+    return parts[parts.length - 1];
+  };
+
+  const shouldProcessDocx = (path: string): boolean => {
+    const fileName = getBaseName(path);
+    return /^1、/u.test(fileName) && /\.docx$/i.test(fileName);
+  };
+
+  const processDocxArrayBuffer = async (
+    docxBuffer: ArrayBuffer,
+    targetWidthPx: number,
+    targetHeightPx: number
+  ): Promise<DocxProcessResult> => {
+    const zip = new JSZip();
+    const zipContent = await zip.loadAsync(docxBuffer);
+
+    const mediaFiles: string[] = [];
+    zipContent.forEach((relativePath) => {
+      if ((relativePath.startsWith('word/media/') || relativePath.startsWith('word/embeddings/')) && 
+          (relativePath.toLowerCase().endsWith('.jpg') || relativePath.toLowerCase().endsWith('.jpeg') || 
+           relativePath.toLowerCase().endsWith('.png') || relativePath.toLowerCase().endsWith('.gif') || 
+           relativePath.toLowerCase().endsWith('.bmp') || relativePath.toLowerCase().endsWith('.tiff') ||
+           relativePath.toLowerCase().endsWith('.svg') || relativePath.toLowerCase().endsWith('.emf') ||
+           relativePath.toLowerCase().endsWith('.wmf'))) {
+        mediaFiles.push(relativePath);
+      }
+    });
+
+    let processedImages = 0;
+    let failedImages = 0;
+
+    const targetWidthEMUs = Math.round(targetWidthPx * 9525);
+    const targetHeightEMUs = Math.round(targetHeightPx * 9525);
+
+    if (mediaFiles.length > 0) {
+      for (const mediaPath of mediaFiles) {
+        const imageFile = zipContent.file(mediaPath);
+        if (imageFile) {
+          try {
+            const imageBuffer = await imageFile.async('arraybuffer');
+            if (mediaPath.toLowerCase().endsWith('.svg') ||
+                mediaPath.toLowerCase().endsWith('.emf') ||
+                mediaPath.toLowerCase().endsWith('.wmf')) {
+              continue;
+            }
+            const resizedImageBuffer = await resizeImage(imageBuffer, targetWidthPx, targetHeightPx, mediaPath);
+            zipContent.file(mediaPath, resizedImageBuffer);
+            processedImages++;
+          } catch (err) {
+            console.error(`Failed to resize image ${mediaPath}:`, err);
+            failedImages++;
+          }
+        }
+      }
+
+      try {
+        const documentXmlFile = zipContent.file('word/document.xml');
+        if (documentXmlFile) {
+          let documentXml = await documentXmlFile.async('string');
+          documentXml = documentXml.replace(
+            /<wp:extent\s+cx="\d+"\s+cy="\d+"/g,
+            `<wp:extent cx="${targetWidthEMUs}" cy="${targetHeightEMUs}"`
+          );
+          documentXml = documentXml.replace(
+            /<a:ext\s+cx="\d+"\s+cy="\d+"/g,
+            `<a:ext cx="${targetWidthEMUs}" cy="${targetHeightEMUs}"`
+          );
+          documentXml = documentXml.replace(
+            /<wp:inline[^>]*><wp:extent\s+cx="\d+"\s+cy="\d+"/g,
+            (match) => match.replace(/cx="\d+"\s+cy="\d+"/, `cx="${targetWidthEMUs}" cy="${targetHeightEMUs}"`)
+          );
+          zipContent.file('word/document.xml', documentXml);
+        }
+      } catch (err) {
+        console.error('Failed to update document.xml:', err);
+      }
+
+      const headerFooterFiles = [
+        'word/header1.xml', 'word/header2.xml', 'word/header3.xml', 'word/header4.xml',
+        'word/footer1.xml', 'word/footer2.xml', 'word/footer3.xml', 'word/footer4.xml'
+      ];
+      for (const fileName of headerFooterFiles) {
+        try {
+          const xmlFile = zipContent.file(fileName);
+          if (xmlFile) {
+            let xmlContent = await xmlFile.async('string');
+            xmlContent = xmlContent.replace(
+              /<wp:extent\s+cx="\d+"\s+cy="\d+"/g,
+              `<wp:extent cx="${targetWidthEMUs}" cy="${targetHeightEMUs}"`
+            );
+            xmlContent = xmlContent.replace(
+              /<a:ext\s+cx="\d+"\s+cy="\d+"/g,
+              `<a:ext cx="${targetWidthEMUs}" cy="${targetHeightEMUs}"`
+            );
+            zipContent.file(fileName, xmlContent);
+          }
+        } catch (err) {
+          console.warn(`Failed to update ${fileName}:`, err);
+        }
+      }
+    }
+
+    const modifiedDocx = await zipContent.generateAsync({ type: 'arraybuffer' });
+    return {
+      buffer: modifiedDocx,
+      processedImages,
+      failedImages,
+      totalMediaFiles: mediaFiles.length
+    };
   };
 
   const processDocFiles = async () => {
@@ -158,18 +270,18 @@ export default function ImageResizer() {
     }));
     setProcessedFiles(initialProcessedFiles);
 
-    const targetWidth = convertToPixels(parseFloat(width), unit);
-    const targetHeight = convertToPixels(parseFloat(height), unit);
+    const targetWidthPx = convertToPixels(parseFloat(width), unit);
+    const targetHeightPx = convertToPixels(parseFloat(height), unit);
 
-    console.log(`Target size: ${targetWidth}x${targetHeight} pixels`);
+    console.log(`Target size: ${targetWidthPx}x${targetHeightPx} pixels`);
 
     // Process each file
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       
       try {
-        // Check if it's a .doc file (binary format)
-        if (file.name.toLowerCase().endsWith('.doc')) {
+        // .doc (binary) unsupported
+        if (/\.doc$/i.test(file.name) && !/\.docx$/i.test(file.name)) {
           setProcessedFiles(prev => prev.map((pf, index) => 
             index === i ? {
               ...pf,
@@ -180,146 +292,106 @@ export default function ImageResizer() {
           continue;
         }
 
-        // Read the DOCX file as ZIP
-        const zip = new JSZip();
-        const zipContent = await zip.loadAsync(file);
+        // .7z unsupported without WASM helper
+        if (/\.7z$/i.test(file.name)) {
+          setProcessedFiles(prev => prev.map((pf, index) => 
+            index === i ? {
+              ...pf,
+              status: "error",
+              error: "暂不支持 .7z 格式处理。请先解压为 .zip 或上传 .zip（如需 .7z 支持可告知，我将集成 7z WASM 模块）。"
+            } : pf
+          ));
+          continue;
+        }
 
-        console.log(`Processing ${file.name}...`);
-        
-        // Find all image files in the document
-        const mediaFiles: string[] = [];
-        
-        zipContent.forEach((relativePath) => {
-          if ((relativePath.startsWith('word/media/') || relativePath.startsWith('word/embeddings/')) && 
-              (relativePath.toLowerCase().endsWith('.jpg') || relativePath.toLowerCase().endsWith('.jpeg') || 
-               relativePath.toLowerCase().endsWith('.png') || relativePath.toLowerCase().endsWith('.gif') || 
-               relativePath.toLowerCase().endsWith('.bmp') || relativePath.toLowerCase().endsWith('.tiff') ||
-               relativePath.toLowerCase().endsWith('.svg') || relativePath.toLowerCase().endsWith('.emf') ||
-               relativePath.toLowerCase().endsWith('.wmf'))) {
-            mediaFiles.push(relativePath);
-          }
-        });
+        // ZIP archive: recursively copy structure, process only DOCX named starting with "1、"
+        if (/\.zip$/i.test(file.name)) {
+          console.log(`Processing ZIP archive ${file.name}...`);
+          const inputZip = await new JSZip().loadAsync(file);
+          const outputZip = new JSZip();
+          let changedDocxCount = 0;
+          let skippedDocxCount = 0;
 
-        console.log(`Found ${mediaFiles.length} image files in ${file.name}`);
-
-        let processedImages = 0;
-        let failedImages = 0;
-
-        // Convert target dimensions to EMUs (English Metric Units) for Word XML
-        const targetWidthEMUs = Math.round(targetWidth * 9525);
-        const targetHeightEMUs = Math.round(targetHeight * 9525);
-
-        if (mediaFiles.length > 0) {
-          // Process each image
-          for (const mediaPath of mediaFiles) {
-            const imageFile = zipContent.file(mediaPath);
-            if (imageFile) {
-              try {
-                const imageBuffer = await imageFile.async('arraybuffer');
-                
-                // Skip SVG, EMF, WMF files as they can't be resized with canvas
-                if (mediaPath.toLowerCase().endsWith('.svg') || 
-                    mediaPath.toLowerCase().endsWith('.emf') || 
-                    mediaPath.toLowerCase().endsWith('.wmf')) {
-                  console.log(`Skipping vector format: ${mediaPath}`);
-                  continue;
+          const entryTasks: Array<Promise<void>> = [];
+          inputZip.forEach((relativePath, entry) => {
+            if (entry.dir) {
+              // Folders are created implicitly when adding files; still create explicitly for clarity
+              outputZip.folder(relativePath);
+            } else {
+              const task = (async () => {
+                try {
+                  if (/\.docx$/i.test(relativePath) && shouldProcessDocx(relativePath)) {
+                    const docxBuf = await entry.async('arraybuffer');
+                    const { buffer: modifiedBuffer } = await processDocxArrayBuffer(docxBuf, targetWidthPx, targetHeightPx);
+                    outputZip.file(relativePath, modifiedBuffer);
+                    changedDocxCount++;
+                  } else {
+                    const bytes = await entry.async('arraybuffer');
+                    outputZip.file(relativePath, bytes);
+                    if (/\.docx$/i.test(relativePath)) {
+                      skippedDocxCount++;
+                    }
+                  }
+                } catch (err) {
+                  console.error(`Failed to process entry ${relativePath}:`, err);
+                  try {
+                    const bytes = await entry.async('arraybuffer');
+                    outputZip.file(relativePath, bytes);
+                  } catch {}
                 }
-                
-                const resizedImageBuffer = await resizeImage(imageBuffer, targetWidth, targetHeight, mediaPath);
-                zipContent.file(mediaPath, resizedImageBuffer);
-                processedImages++;
-              } catch (error) {
-                console.error(`Failed to resize image ${mediaPath}:`, error);
-                failedImages++;
-              }
+              })();
+              entryTasks.push(task);
             }
+          });
+
+          for (const t of entryTasks) {
+            await t;
           }
 
-          // Update Word document XML to modify image dimensions
-          try {
-            const documentXmlFile = zipContent.file('word/document.xml');
-            if (documentXmlFile) {
-              let documentXml = await documentXmlFile.async('string');
-              
-              documentXml = documentXml.replace(
-                /<wp:extent\s+cx="\d+"\s+cy="\d+"/g,
-                `<wp:extent cx="${targetWidthEMUs}" cy="${targetHeightEMUs}"`
-              );
-              
-              documentXml = documentXml.replace(
-                /<a:ext\s+cx="\d+"\s+cy="\d+"/g,
-                `<a:ext cx="${targetWidthEMUs}" cy="${targetHeightEMUs}"`
-              );
-              
-              documentXml = documentXml.replace(
-                /<wp:inline[^>]*><wp:extent\s+cx="\d+"\s+cy="\d+"/g,
-                (match) => {
-                  return match.replace(
-                    /cx="\d+"\s+cy="\d+"/,
-                    `cx="${targetWidthEMUs}" cy="${targetHeightEMUs}"`
-                  );
-                }
-              );
-              
-              zipContent.file('word/document.xml', documentXml);
-            }
-          } catch (error) {
-            console.error('Failed to update document.xml:', error);
-          }
+          const outBlob = await outputZip.generateAsync({ type: 'blob' });
+          const downloadUrl = URL.createObjectURL(outBlob);
+          const resultMessage = `已保留原始目录结构。处理完成：修改 ${changedDocxCount} 个以“1、”开头的文档；跳过 ${skippedDocxCount} 个其他文档。`;
 
-          // Update headers/footers if they contain images
-          const headerFooterFiles = ['word/header1.xml', 'word/header2.xml', 'word/header3.xml', 'word/header4.xml',
-                                    'word/footer1.xml', 'word/footer2.xml', 'word/footer3.xml', 'word/footer4.xml'];
+          setProcessedFiles(prev => prev.map((pf, index) => 
+            index === i ? {
+              ...pf,
+              status: "completed",
+              downloadUrl,
+              message: resultMessage
+            } : pf
+          ));
+          continue;
+        }
+
+        // Single DOCX: process directly (backward compatible)
+        if (/\.docx$/i.test(file.name)) {
+          const arrayBuffer = await file.arrayBuffer();
+          const { buffer: modifiedBuffer, processedImages, failedImages, totalMediaFiles } = await processDocxArrayBuffer(arrayBuffer, targetWidthPx, targetHeightPx);
+          const modifiedDocx = new Blob([modifiedBuffer], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+          const downloadUrl = URL.createObjectURL(modifiedDocx);
           
-          for (const fileName of headerFooterFiles) {
-            try {
-              const xmlFile = zipContent.file(fileName);
-              if (xmlFile) {
-                let xmlContent = await xmlFile.async('string');
-                
-                xmlContent = xmlContent.replace(
-                  /<wp:extent\s+cx="\d+"\s+cy="\d+"/g,
-                  `<wp:extent cx="${targetWidthEMUs}" cy="${targetHeightEMUs}"`
-                );
-                
-                xmlContent = xmlContent.replace(
-                  /<a:ext\s+cx="\d+"\s+cy="\d+"/g,
-                  `<a:ext cx="${targetWidthEMUs}" cy="${targetHeightEMUs}"`
-                );
-                
-                zipContent.file(fileName, xmlContent);
-              }
-            } catch (error) {
-              console.warn(`Failed to update ${fileName}:`, error);
+          let resultMessage = '';
+          if (processedImages === 0 && totalMediaFiles === 0) {
+            resultMessage = '文档中未找到可处理的图片，返回原始文档。';
+          } else if (processedImages === 0 && totalMediaFiles > 0) {
+            resultMessage = `找到 ${totalMediaFiles} 个图片文件，但都无法处理（可能是矢量格式），返回原始文档。`;
+          } else {
+            resultMessage = `成功处理 ${processedImages} 个图片，调整为 ${width}×${height}${unit} 尺寸。`;
+            if (failedImages > 0) {
+              resultMessage += ` ${failedImages} 个图片处理失败，保持原始尺寸。`;
             }
           }
+          
+          setProcessedFiles(prev => prev.map((pf, index) => 
+            index === i ? {
+              ...pf,
+              status: "completed",
+              downloadUrl,
+              message: resultMessage
+            } : pf
+          ));
+          continue;
         }
-
-        // Generate the modified DOCX file
-        const modifiedDocx = await zipContent.generateAsync({ type: "blob" });
-        const downloadUrl = URL.createObjectURL(modifiedDocx);
-        
-        let resultMessage = '';
-        if (processedImages === 0 && mediaFiles.length === 0) {
-          resultMessage = '文档中未找到可处理的图片，返回原始文档。';
-        } else if (processedImages === 0 && mediaFiles.length > 0) {
-          resultMessage = `找到 ${mediaFiles.length} 个图片文件，但都无法处理（可能是矢量格式），返回原始文档。`;
-        } else {
-          resultMessage = `成功处理 ${processedImages} 个图片，调整为 ${width}×${height}${unit} 尺寸。`;
-          if (failedImages > 0) {
-            resultMessage += ` ${failedImages} 个图片处理失败，保持原始尺寸。`;
-          }
-        }
-        
-        // Update the specific file's status
-        setProcessedFiles(prev => prev.map((pf, index) => 
-          index === i ? {
-            ...pf,
-            status: "completed",
-            downloadUrl,
-            message: resultMessage
-          } : pf
-        ));
 
       } catch (error) {
         console.error(`Error processing file ${file.name}:`, error);
@@ -336,8 +408,6 @@ export default function ImageResizer() {
     setIsProcessing(false);
   };
 
-
-
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (files.length === 0) {
@@ -352,13 +422,12 @@ export default function ImageResizer() {
   };
 
   const downloadAll = async () => {
-    const completedFiles = processedFiles.filter((pf, index) => 
+    const completedFiles = processedFiles.filter((pf) => 
       pf.status === "completed" && pf.downloadUrl
     );
     
     if (completedFiles.length === 0) return;
     
-    // Add loading state for download all
     setIsProcessing(true);
     
     try {
@@ -367,7 +436,17 @@ export default function ImageResizer() {
         const originalIndex = processedFiles.findIndex(pf => pf === processedFile);
         
         if (processedFile.downloadUrl) {
-          const fileName = files[originalIndex].name.replace(/\.docx$/i, `_resized_${width}x${height}${unit}.docx`);
+          const originalName = files[originalIndex].name;
+          let fileName = originalName;
+          if (/\.docx$/i.test(originalName)) {
+            fileName = originalName.replace(/\.docx$/i, `_resized_${width}x${height}${unit}.docx`);
+          } else if (/\.zip$/i.test(originalName)) {
+            fileName = originalName.replace(/\.zip$/i, `_processed_${width}x${height}${unit}.zip`);
+          } else if (/\.7z$/i.test(originalName)) {
+            fileName = originalName.replace(/\.7z$/i, `_processed_${width}x${height}${unit}.7z`);
+          } else {
+            fileName = `${originalName}_processed_${width}x${height}${unit}`;
+          }
           const link = document.createElement('a');
           link.href = processedFile.downloadUrl;
           link.download = fileName;
@@ -375,10 +454,8 @@ export default function ImageResizer() {
           link.click();
           document.body.removeChild(link);
           
-          // Add delay between downloads to prevent browser blocking
-          // Only add delay if there are more files to download
           if (i < completedFiles.length - 1) {
-            await new Promise(resolve => setTimeout(resolve, 500)); // 500ms delay
+            await new Promise(resolve => setTimeout(resolve, 500));
           }
         }
       }
@@ -414,16 +491,16 @@ export default function ImageResizer() {
       <div className="container">
         <h1>文档图片尺寸调整工具</h1>
         <p className="description">
-          上传 Word 文档（.doc/.docx），最多可选择30个文件，调整文档中所有图片的尺寸。如果文档没有图片，将返回原始文档。
+          上传 Word 文档（.doc/.docx）或压缩包（.zip/.7z），最多可选择30个文件，调整文档中所有图片的尺寸。如果文档没有图片，将返回原始文档。
         </p>
 
         <form onSubmit={handleSubmit} className="form">
           <div className="form-group">
-            <label htmlFor="file-input">选择文档文件 (.doc/.docx) - 最多30个文件:</label>
+            <label htmlFor="file-input">选择文档或压缩包 (.doc/.docx/.zip/.7z) - 最多30个文件:</label>
             <input
               id="file-input"
               type="file"
-              accept=".doc,.docx"
+              accept=".doc,.docx,.zip,.7z"
               onChange={handleFileChange}
               className="file-input"
               multiple
@@ -522,8 +599,8 @@ export default function ImageResizer() {
         <div className="info-section">
           <h3>使用说明</h3>
           <ul>
-            <li>支持 .doc 和 .docx 格式的 Word 文档，最多可选择30个文件</li>
-            <li>会自动识别并调整文档中的所有图片尺寸</li>
+            <li>支持 .doc 和 .docx 格式的 Word 文档，以及 .zip 压缩包</li>
+            <li>.zip 内将保留原始目录结构，仅处理文件名以“1、”开头的 .docx 文档</li>
             <li>如果文档中没有图片，将返回原始文档</li>
             <li>可以使用"下载所有完成的文件"按钮批量下载处理完成的文件</li>
             <li>处理后的文件名包含尺寸信息</li>

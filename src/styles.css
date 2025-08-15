@@ -6,7 +6,7 @@
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+  font-family: 'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Oxygen',
     'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
     sans-serif;
   -webkit-font-smoothing: antialiased;
@@ -332,7 +332,7 @@ form {
   border-radius: 16px;
   padding: 2.5rem;
   margin-bottom: 2rem;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+  box-shadow: 0 1px 3px rgba(60,64,67,.3), 0 4px 8px 3px rgba(60,64,67,.15);
   border: 1px solid #e5e5e7;
 }
 
@@ -396,13 +396,13 @@ form {
   padding: 2rem;
   background: #fbfbfd;
   border-radius: 12px;
-  border: 2px dashed #d1d1d6;
+  border: 1px solid #dadce0;
   transition: all 0.2s ease;
 }
 
 .file-upload:hover {
-  border-color: #007aff;
-  background: #f0f9ff;
+  border-color: #1a73e8;
+  background: #f8faff;
 }
 
 .file-upload label {
@@ -416,7 +416,7 @@ form {
 .file-upload input[type="file"] {
   width: 100%;
   padding: 0.875rem;
-  border: 1px solid #d1d1d6;
+  border: 1px solid #dadce0;
   border-radius: 8px;
   background: white;
   color: #1d1d1f;
@@ -425,7 +425,7 @@ form {
 }
 
 .file-upload input[type="file"]:hover {
-  border-color: #007aff;
+  border-color: #1a73e8;
 }
 
 .file-list {
@@ -544,7 +544,7 @@ form {
 
 /* Button Styles */
 button {
-  background: #007aff;
+  background: #1a73e8;
   color: white;
   border: none;
   padding: 0.875rem 1.5rem;
@@ -557,9 +557,9 @@ button {
 }
 
 button:hover:not(:disabled) {
-  background: #0056cc;
+  background: #1765cc;
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(0, 122, 255, 0.3);
+  box-shadow: 0 4px 12px rgba(26, 115, 232, 0.3);
 }
 
 button:active:not(:disabled) {
@@ -631,15 +631,15 @@ form > button[type="submit"]:hover:not(:disabled) {
 
 /* Excel Download Button */
 .excel-download-btn {
-  background: #ff9500 !important;
+  background: #1a73e8 !important;
   font-size: 1.1rem !important;
   font-weight: 600 !important;
   padding: 1rem 2rem !important;
 }
 
 .excel-download-btn:hover:not(:disabled) {
-  background: #e6850e !important;
-  box-shadow: 0 4px 12px rgba(255, 149, 0, 0.3) !important;
+  background: #1765cc !important;
+  box-shadow: 0 4px 12px rgba(26, 115, 232, 0.3) !important;
 }
 
 .excel-download-btn:disabled {
@@ -653,12 +653,35 @@ form > button[type="submit"]:hover:not(:disabled) {
   gap: 2rem;
 }
 
+/* Annex toggle segmented control */
+.annex-toggle {
+  display: inline-flex;
+  background: #e8f0fe;
+  border: 1px solid #d2e3fc;
+  border-radius: 9999px;
+  padding: 4px;
+  gap: 4px;
+  align-self: flex-start;
+}
+
+.annex-toggle-btn {
+  background: transparent;
+  color: #1a73e8;
+  padding: 6px 14px;
+  border-radius: 9999px;
+}
+
+.annex-toggle-btn.active {
+  background: #1a73e8;
+  color: white;
+}
+
 .file-result {
   background: white;
   border-radius: 16px;
   overflow: hidden;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
-  border: 1px solid #e5e5e7;
+  box-shadow: 0 1px 3px rgba(60,64,67,.3), 0 4px 8px 3px rgba(60,64,67,.15);
+  border: 1px solid #dadce0;
   transition: all 0.2s ease;
 }
 
@@ -668,14 +691,15 @@ form > button[type="submit"]:hover:not(:disabled) {
 }
 
 .file-header {
-  background: #1d1d1f;
-  color: white;
+  background: white;
+  color: #202124;
   padding: 1.5rem;
   display: flex;
   justify-content: space-between;
   align-items: center;
   flex-wrap: wrap;
   gap: 1rem;
+  border-bottom: 1px solid #e5e5e7;
 }
 
 .file-header h3 {
@@ -699,18 +723,18 @@ form > button[type="submit"]:hover:not(:disabled) {
 }
 
 .status-badge.processing {
-  background: #ff9500;
+  background: #fbbc04;
   color: white;
   animation: pulse 1.5s infinite;
 }
 
 .status-badge.completed {
-  background: #34c759;
+  background: #34a853;
   color: white;
 }
 
 .status-badge.error {
-  background: #ff3b30;
+  background: #ea4335;
   color: white;
 }
 
@@ -731,8 +755,8 @@ form > button[type="submit"]:hover:not(:disabled) {
 }
 
 .annex-header {
-  background: #f2f2f7;
-  color: #1d1d1f;
+  background: #f8f9fa;
+  color: #202124;
   padding: 1rem 1.5rem;
   margin: 0;
   border-bottom: 1px solid #e5e5e7;
@@ -762,8 +786,8 @@ table {
 }
 
 table thead {
-  background: #f2f2f7;
-  color: #1d1d1f;
+  background: #f8f9fa;
+  color: #202124;
 }
 
 table th,
@@ -789,11 +813,49 @@ table tbody tr:hover {
 }
 
 .issue-cell {
-  max-width: 400px;
-  word-wrap: break-word;
-  white-space: pre-wrap;
-  line-height: 1.5;
+  max-width: 600px;
+  vertical-align: top;
+}
+
+/* Pretty issues formatting like Excel cell wrapping */
+.issues-cell {
   font-size: 0.9rem;
+  line-height: 1.5;
+  color: #202124;
+  white-space: normal;
+}
+
+.issues-section + .issues-section {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed #e0e0e0;
+}
+
+.issues-label {
+  font-weight: 600;
+}
+
+.issues-company {
+  font-weight: 600;
+  margin-left: 4px;
+}
+
+.issues-list {
+  margin-top: 6px;
+}
+
+.issues-item {
+  padding-left: 8px;
+}
+
+.smart-sort-btn {
+  background: #e8f0fe;
+  color: #1a73e8;
+}
+
+.smart-sort-btn.active {
+  background: #1a73e8;
+  color: #fff;
 }
 
 /* Raw Data Styles */
@@ -818,11 +880,29 @@ table tbody tr:hover {
   padding: 1rem;
   border-radius: 6px;
   overflow-x: auto;
-  font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', monospace;
+  font-family: 'Roboto Mono', 'SF Mono', 'Monaco', 'Inconsolata', monospace;
   font-size: 0.85rem;
   line-height: 1.5;
   color: #424245;
-  border: 1px solid #e5e5e7;
+  border: 1px solid #e0e0e0;
+}
+.toolbar-actions {
+  background: white;
+  border: 1px solid #dadce0;
+  border-radius: 12px;
+  padding: 0.75rem;
+  display: flex;
+  gap: 0.75rem;
+  box-shadow: 0 1px 3px rgba(60,64,67,.3), 0 4px 8px 3px rgba(60,64,67,.15);
+}
+
+.sort-controls button {
+  background: #e8f0fe;
+  color: #1a73e8;
+}
+
+.sort-controls button:hover:not(:disabled) {
+  background: #d2e3fc;
 }
 
 /* Responsive Design */
@@ -1048,3 +1128,30 @@ table tbody tr:hover {
   color: #6e6e73;
   font-weight: 400;
 } 
+
+/* Drag handle and sorting controls */
+.file-item-simple {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.drag-handle {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid #888;
+  cursor: grab;
+  background: radial-gradient(circle at 30% 30%, #aaa 2px, transparent 2px),
+              radial-gradient(circle at 70% 30%, #aaa 2px, transparent 2px),
+              radial-gradient(circle at 30% 70%, #aaa 2px, transparent 2px),
+              radial-gradient(circle at 70% 70%, #aaa 2px, transparent 2px);
+}
+
+.file-item-simple:active .drag-handle {
+  cursor: grabbing;
+}
+
+.sort-controls {
+  margin: 8px 0 12px;
+}

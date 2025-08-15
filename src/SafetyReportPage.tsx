@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import * as mammoth from "mammoth";
 import * as ExcelJS from "exceljs";
 import "./styles.css";
@@ -29,14 +29,133 @@ export default function SafetyReportPage() {
   // Update state for user inputs - remove individual settings, keep only the new mapping
   const [scheduleMappingText, setScheduleMappingText] = useState("");
 
-  const [copiedAnnex1, setCopiedAnnex1] = useState(false);
-  const [copiedAnnex2, setCopiedAnnex2] = useState(false);
+  // Per-file actual check dates (editable by user). Defaults to file last modified date
+  const [actualDates, setActualDates] = useState<string[]>([]);
+  const [activeAnnex, setActiveAnnex] = useState<"annex1" | "annex2">("annex1");
+  const [smartSortActive, setSmartSortActive] = useState<boolean>(false);
+
+  // Ordering state
+  const [originalOrder, setOriginalOrder] = useState<number[]>([]);
+  const [displayOrder, setDisplayOrder] = useState<number[]>([]);
+  const [sortMode, setSortMode] = useState<"original" | "asc" | "desc">("original");
+  const [draggingIndex, setDraggingIndex] = useState<number | null>(null);
+
+  
 
   // 定义表头常量
   const annex1Header =
     "区域\t镇/街道\t出租方名称\t承租方名称\t计划核查时间\t实际核查时间";
   const annex2Header =
     "核查机构名称\t地区\t厂中厂名称\t核查时间\t存在问题\t重大隐患数量\t一般隐患数量\t隐患总数量\t现场隐患\t管理隐患\t是否属于涉爆粉尘、金属熔融企业";
+
+  // Headers for consolidated table view
+  const ANNEX1_HEADERS = [
+    "区域",
+    "镇/街道",
+    "出租方名称",
+    "承租方名称",
+    "计划核查时间",
+    "实际核查时间",
+  ];
+  const ANNEX2_HEADERS = [
+    "核查机构名称",
+    "地区",
+    "厂中厂名称",
+    "核查时间",
+    "存在问题",
+    "重大隐患数量",
+    "一般隐患数量",
+    "隐患总数量",
+    "现场隐患",
+    "管理隐患",
+    "是否属于涉爆粉尘、金属熔融企业",
+  ];
+
+  // Helper to parse issues into rich JSX for frontend display (match Excel's layout intent)
+  const renderIssuesContent = (issuesText: string) => {
+    if (!issuesText) return null;
+    const parts = issuesText.split(/(出租方：|承租方：)/);
+    const sections: Array<{ label: string; company: string; items: string[] }> = [];
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i];
+      if (part === "出租方：" || part === "承租方：") {
+        const content = (parts[i + 1] || "").trim();
+        // Extract company name (before first numbered item like n、)
+        const companyMatch = content.match(/^([^1-9]*?)(\s*\d+、)/);
+        let company = "";
+        let rest = content;
+        if (companyMatch) {
+          company = (companyMatch[1] || "").trim();
+          rest = content.substring(companyMatch[1].length).trim();
+        }
+        // Split numbered items
+        const items = rest
+          ? rest.replace(/(\d+、)/g, "\n$1").split("\n").map((s) => s.trim()).filter(Boolean)
+          : [];
+        sections.push({ label: part.replace("：", ""), company, items });
+      }
+    }
+    return (
+      <div className="issues-cell">
+        {sections.map((sec, idx) => (
+          <div key={idx} className="issues-section">
+            <span className="issues-label">{sec.label}：</span>
+            {sec.company && <span className="issues-company">{sec.company}</span>}
+            {sec.items.length > 0 && (
+              <div className="issues-list">
+                {sec.items.map((it, i) => (
+                  <div key={i} className="issues-item">{it}</div>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  // Build consolidated rows for current annex, respecting display order; optionally apply smart sort for Annex2
+  const getSmartResponseOrder = (): number[] => {
+    const baseOrder = (displayOrder.length ? displayOrder : responses.map((_, i) => i)).filter(
+      (i) => responses[i]?.status === "completed"
+    );
+    if (!smartSortActive) return baseOrder;
+    // Derive order from Annex2 first line: date(index 3) asc, then factory(index 2) asc
+    const withKeys = baseOrder.map((idx) => {
+      const resp = responses[idx];
+      const text = resp?.annex2 || "";
+      const firstLine = text
+        .split("\n")
+        .map((l) => l.trim())
+        .filter(Boolean)[0] || "";
+      const cols = firstLine ? firstLine.split("\t") : [];
+      const date = cols[3] || "";
+      const factory = cols[2] || "";
+      return { idx, date, factory };
+    });
+    withKeys.sort((a, b) => {
+      if (a.date !== b.date) return a.date < b.date ? -1 : 1;
+      return a.factory.localeCompare(b.factory);
+    });
+    return withKeys.map((k) => k.idx);
+  };
+
+  const getConsolidatedRows = (annex: "annex1" | "annex2"): string[][] => {
+    const order = getSmartResponseOrder();
+    const ordered = order.map((origIndex) => responses[origIndex]).filter((r) => !!r);
+    const allRows: string[][] = [];
+    ordered.forEach((resp) => {
+      const text = annex === "annex1" ? resp.annex1 : resp.annex2;
+      if (!text) return;
+      const rows = text
+        .trim()
+        .split("\n")
+        .filter((line) => line.trim())
+        .map((line) => line.split("\t"));
+      rows.forEach((r) => allRows.push(r));
+    });
+    return allRows;
+  };
 
   // Helper function to parse the schedule mapping (commented out for now)
   /* const parseScheduleMapping = (text: string): ScheduleMapping[] => {
@@ -71,7 +190,7 @@ export default function SafetyReportPage() {
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
-      const newFiles = Array.from(e.target.files).slice(0, 30);
+      const newFiles = Array.from(e.target.files).slice(0, 100);
       setFiles(newFiles);
 
       setResponses(
@@ -82,7 +201,88 @@ export default function SafetyReportPage() {
           status: "idle",
         }))
       );
+
+      // Initialize actual dates with file's last modified date (YYYY-MM-DD)
+      setActualDates(newFiles.map((file) => getFileActualDate(file)));
+
+      // Initialize ordering
+      const initOrder = newFiles.map((_, i) => i);
+      setOriginalOrder(initOrder);
+      setDisplayOrder(initOrder);
+      setSortMode("original");
     }
+  };
+
+  // Allow user to manually edit the actual check date for each file
+  const handleDateChange = (index: number, value: string) => {
+    setActualDates((prev) => {
+      const next = [...prev];
+      next[index] = value;
+      return next;
+    });
+  };
+
+  // Compute ordering by date
+  const computeOrderByDate = (mode: "asc" | "desc"): number[] => {
+    const indices = [...(displayOrder.length ? displayOrder : originalOrder)];
+    const getDateFor = (i: number) => actualDates[i] || (files[i] ? getFileActualDate(files[i]) : "");
+    indices.sort((a, b) => {
+      const da = getDateFor(a);
+      const db = getDateFor(b);
+      if (da === db) return a - b;
+      return mode === "asc" ? (da < db ? -1 : 1) : (da > db ? -1 : 1);
+    });
+    return indices;
+  };
+
+  // Toggle sort mode
+  const handleToggleSort = () => {
+    setSortMode((prev) => {
+      const next = prev === "original" ? "asc" : prev === "asc" ? "desc" : "original";
+      if (next === "original") {
+        setDisplayOrder([...originalOrder]);
+      } else if (next === "asc") {
+        setDisplayOrder(computeOrderByDate("asc"));
+      } else {
+        setDisplayOrder(computeOrderByDate("desc"));
+      }
+      return next;
+    });
+  };
+
+  // Keep display order in sync when dates change under sorted modes
+  useEffect(() => {
+    if (files.length === 0) return;
+    if (sortMode === "asc") {
+      setDisplayOrder(computeOrderByDate("asc"));
+    } else if (sortMode === "desc") {
+      setDisplayOrder(computeOrderByDate("desc"));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [actualDates]);
+
+  // Drag & drop handlers
+  const onDragStart = (origIndex: number) => {
+    setDraggingIndex(origIndex);
+  };
+
+  const onDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+  };
+
+  const onDropOverItem = (targetOrigIndex: number) => {
+    if (draggingIndex === null || draggingIndex === targetOrigIndex) return;
+    setSortMode("original");
+    setDisplayOrder((prev) => {
+      const fromPos = prev.indexOf(draggingIndex);
+      const toPos = prev.indexOf(targetOrigIndex);
+      if (fromPos === -1 || toPos === -1) return prev;
+      const next = [...prev];
+      const [moved] = next.splice(fromPos, 1);
+      next.splice(toPos, 0, moved);
+      return next;
+    });
+    setDraggingIndex(null);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -104,13 +304,14 @@ export default function SafetyReportPage() {
 
     try {
       await Promise.all(
-        files.map(async (file, index) => {
+        (displayOrder.length ? displayOrder : files.map((_, i) => i)).map(async (origIndex) => {
           try {
+            const file = files[origIndex];
             // 从DOCX中提取文本
             const extractedText = await extractTextFromDocx(file);
 
-            // Get file's actual check date from metadata
-            const actualCheckDate = getFileActualDate(file);
+            // Use user-edited actual check date if provided, otherwise fallback to file's last modified date
+            const actualCheckDate = actualDates[origIndex] || getFileActualDate(file);
 
             // 准备prompt with the new mapping format
             const prompt = `请根据以下文档内容和安全检查信息，严格按照以下格式返回数据：
@@ -218,7 +419,7 @@ export default function SafetyReportPage() {
 
             setResponses((prev) =>
               prev.map((resp, i) =>
-                i === index
+                i === origIndex
                   ? {
                       ...resp,
                       annex1,
@@ -231,7 +432,7 @@ export default function SafetyReportPage() {
           } catch (err) {
             setResponses((prev) =>
               prev.map((resp, i) =>
-                i === index
+                i === origIndex
                   ? {
                       ...resp,
                       status: "error",
@@ -353,7 +554,11 @@ export default function SafetyReportPage() {
     const workbook = new ExcelJS.Workbook();
     
     // Get completed responses
-    const completedResponses = responses.filter(resp => resp.status === "completed");
+    const order = (displayOrder.length ? displayOrder : responses.map((_, i) => i));
+    const completedResponses = order
+      .map((i) => responses[i])
+      .filter(resp => resp.status === "completed");
+
     if (completedResponses.length === 0) return;
 
     // Create 附件1 worksheet
@@ -363,37 +568,25 @@ export default function SafetyReportPage() {
     const annex1Headers = ["区域", "镇/街道", "出租方名称", "承租方名称", "计划核查时间", "实际核查时间"];
     annex1Sheet.addRow(annex1Headers);
     
-    // Style header row for 附件1
+    // Style header row for 附件1 (no fill, fixed height)
     const annex1HeaderRow = annex1Sheet.getRow(1);
-    annex1HeaderRow.font = { name: "宋体", size: 9, bold: true, color: { argb: "FFFFFFFF" } };
-    annex1HeaderRow.fill = {
-      type: "pattern",
-      pattern: "solid",
-      fgColor: { argb: "FF2E86AB" }
-    };
+    annex1HeaderRow.font = { name: "宋体", size: 9, bold: true };
     annex1HeaderRow.alignment = { horizontal: "center", vertical: "middle" };
+    annex1HeaderRow.height = 39;
     
-    // Add data rows for 附件1
-    completedResponses.forEach((response) => {
-      if (response.annex1) {
-        // Split data directly since AI response contains only data rows (no headers)
-        const lines = response.annex1.trim().split("\n");
-        lines.forEach((line) => {
-          if (line.trim()) {
-            const row = line.split("\t");
-            const dataRow = annex1Sheet.addRow(row);
-            dataRow.alignment = { vertical: "middle", wrapText: true };
-            // Set font for all cells in row
-            dataRow.eachCell((cell: any, colNumber: number) => {
-              cell.font = { name: "宋体", size: 9 };
-              // Center-align date columns (5 and 6, 1-based)
-              if (colNumber === 5 || colNumber === 6) {
-                cell.alignment = { ...cell.alignment, horizontal: "center" };
-              }
-            });
-          }
-        });
-      }
+    // Add data rows for 附件1 using consolidated rows to respect current ordering (and smart sort)
+    const annex1Rows = getConsolidatedRows("annex1");
+    annex1Rows.forEach((row) => {
+      const dataRow = annex1Sheet.addRow(row);
+      dataRow.alignment = { vertical: "middle", wrapText: true };
+      // Set font for all cells in row
+      dataRow.eachCell((cell: any, colNumber: number) => {
+        cell.font = { name: "宋体", size: 9 };
+        // Center-align date columns (5 and 6, 1-based)
+        if (colNumber === 5 || colNumber === 6) {
+          cell.alignment = { ...cell.alignment, horizontal: "center" };
+        }
+      });
     });
 
     // Auto-size columns and add borders for 附件1
@@ -408,8 +601,9 @@ export default function SafetyReportPage() {
       };
     });
 
-    // Add borders to all cells in 附件1
+    // Add borders to all cells in 附件1 and set uniform row height (skip header for fill)
     annex1Sheet.eachRow((row: any, rowNumber: number) => {
+      row.height = rowNumber === 1 ? 39 : 39;
       row.eachCell((cell: any) => {
         cell.border = {
           top: { style: "thin" },
@@ -442,58 +636,46 @@ export default function SafetyReportPage() {
     ];
     annex2Sheet.addRow(annex2Headers);
     
-    // Style header row for 附件2
+    // Style header row for 附件2 (no fill, fixed height)
     const annex2HeaderRow = annex2Sheet.getRow(1);
-    annex2HeaderRow.font = { name: "宋体", size: 9, bold: true, color: { argb: "FFFFFFFF" } };
-    annex2HeaderRow.fill = {
-      type: "pattern",
-      pattern: "solid",
-      fgColor: { argb: "FF27AE60" }
-    };
+    annex2HeaderRow.font = { name: "宋体", size: 9, bold: true };
     annex2HeaderRow.alignment = { horizontal: "center", vertical: "middle" };
+    annex2HeaderRow.height = 39;
     
-    // Add data rows for 附件2
-    completedResponses.forEach((response) => {
-      if (response.annex2) {
-        // Split data directly since AI response contains only data rows (no headers)
-        const lines = response.annex2.trim().split("\n");
-        lines.forEach((line) => {
-          if (line.trim()) {
-            const row = line.split("\t");
-            // Convert numeric columns to numbers
-            // Numeric columns: 重大隐患数量(5), 一般隐患数量(6), 隐患总数量(7), 现场隐患(8), 管理隐患(9)
-            const processedRow = row.map((value, index) => {
-              if ([5, 6, 7, 8, 9].includes(index)) {
-                const numValue = parseInt(value);
-                return isNaN(numValue) ? 0 : numValue;
-              }
-              return value;
-            });
-            const dataRow = annex2Sheet.addRow(processedRow);
-            dataRow.alignment = { vertical: "middle", wrapText: true };
-            // Set font for all cells in row
-            dataRow.eachCell((cell: any, colNumber: number) => {
-              cell.font = { name: "宋体", size: 9 };
-              // Set number format for numeric columns
-              if ([6, 7, 8, 9, 10].includes(cell.col)) { // 1-based indexing for columns
-                cell.numFmt = '0';
-              }
-              // Center-align date (4) and number columns (6-10, 1-based)
-              if (colNumber === 4 || [6, 7, 8, 9, 10].includes(colNumber)) {
-                cell.alignment = { ...cell.alignment, horizontal: "center" };
-              }
-            });
-            // Special formatting for the "存在问题" column (index 4)
-            if (row[4]) {
-              const issueCell = dataRow.getCell(5);
-              issueCell.alignment = { vertical: "top", wrapText: true };
-              // Create rich text with bold landlord/tenant names
-              const issuesText = row[4];
-              const richText = createRichTextForIssues(issuesText);
-              issueCell.value = richText;
-            }
-          }
-        });
+    // Add data rows for 附件2, possibly smart-sorted
+    const annex2Rows = getConsolidatedRows("annex2");
+    annex2Rows.forEach((row) => {
+      // Convert numeric columns to numbers
+      // Numeric columns: 重大隐患数量(5), 一般隐患数量(6), 隐患总数量(7), 现场隐患(8), 管理隐患(9)
+      const processedRow = row.map((value, index) => {
+        if ([5, 6, 7, 8, 9].includes(index)) {
+          const numValue = parseInt(value);
+          return isNaN(numValue) ? 0 : numValue;
+        }
+        return value;
+      });
+      const dataRow = annex2Sheet.addRow(processedRow);
+      dataRow.alignment = { vertical: "middle", wrapText: true };
+      // Set font for all cells in row
+      dataRow.eachCell((cell: any, colNumber: number) => {
+        cell.font = { name: "宋体", size: 9 };
+        // Set number format for numeric columns
+        if ([6, 7, 8, 9, 10].includes(colNumber)) { // 1-based indexing for columns
+          (cell as any).numFmt = '0';
+        }
+        // Center-align date (4) and number columns (6-10, 1-based)
+        if (colNumber === 4 || [6, 7, 8, 9, 10].includes(colNumber)) {
+          cell.alignment = { ...cell.alignment, horizontal: "center" };
+        }
+      });
+      // Special formatting for the "存在问题" column (index 4)
+      if (row[4]) {
+        const issueCell = dataRow.getCell(5);
+        issueCell.alignment = { vertical: "top", wrapText: true };
+        // Create rich text with bold landlord/tenant names
+        const issuesText = row[4];
+        const richText = createRichTextForIssues(issuesText);
+        issueCell.value = richText;
       }
     });
 
@@ -509,8 +691,9 @@ export default function SafetyReportPage() {
       }
     });
 
-    // Add borders to all cells in 附件2
+    // Add borders to all cells in 附件2 and set uniform row height (skip header for fill)
     annex2Sheet.eachRow((row: any, rowNumber: number) => {
+      row.height = rowNumber === 1 ? 39 : 393;
       row.eachCell((cell: any) => {
         cell.border = {
           top: { style: "thin" },
@@ -546,78 +729,9 @@ export default function SafetyReportPage() {
     window.URL.revokeObjectURL(url);
   };
 
-  // Copy to clipboard functions
-  const copyAnnex1ToClipboard = () => {
-    const textToCopy = responses
-      .filter((resp) => resp.annex1 && resp.status === "completed")
-      .map((resp) => {
-        // 如果内容不包含表头，则添加表头
-        return resp.annex1;
-      })
-      .join("\n"); // 文件间用空行分隔
+  // Copy buttons removed per request
 
-    if (!textToCopy) return;
-
-    navigator.clipboard
-      .writeText(textToCopy)
-      .then(() => {
-        setCopiedAnnex1(true);
-        setTimeout(() => setCopiedAnnex1(false), 2000);
-      })
-      .catch((err) => {
-        console.error("复制失败:", err);
-        setGlobalError("复制附件1失败");
-      });
-  };
-
-  const copyAnnex2ToClipboard = () => {
-    const textToCopy = responses
-      .filter((resp) => resp.annex2 && resp.status === "completed")
-      .map((resp) => {
-        // 如果内容不包含表头，则添加表头
-
-        return resp.annex2;
-      })
-      .join("\n"); // 文件间用空行分隔
-
-    if (!textToCopy) return;
-
-    navigator.clipboard
-      .writeText(textToCopy)
-      .then(() => {
-        setCopiedAnnex2(true);
-        setTimeout(() => setCopiedAnnex2(false), 2000);
-      })
-      .catch((err) => {
-        console.error("复制失败:", err);
-        setGlobalError("复制附件2失败");
-      });
-  };
-
-  // Parse tab-separated data for table display
-  const parseTabData = (data: string) => {
-    if (!data) return { headers: [], rows: [] };
-
-    const lines = data.split("\n");
-    const headers = lines[0]?.split("\t") || [];
-    const rows = lines.slice(1).map((line) => line.split("\t"));
-
-    return { headers, rows };
-  };
-
-  // Render status badge
-  const renderStatusBadge = (status: string, error?: string) => {
-    switch (status) {
-      case "processing":
-        return <span className="status-badge processing">处理中</span>;
-      case "completed":
-        return <span className="status-badge completed">完成</span>;
-      case "error":
-        return <span className="status-badge error">错误: {error}</span>;
-      default:
-        return <span className="status-badge">等待</span>;
-    }
-  };
+  // Removed per consolidated table view
   
   return (
     <div className="app">
@@ -640,7 +754,7 @@ export default function SafetyReportPage() {
           </div>
 
           <div className="file-upload">
-            <label htmlFor="file-upload">上传检查文档 (最多30个):</label>
+            <label htmlFor="file-upload">上传检查文档 (最多100个):</label>
             <input
               id="file-upload"
               type="file"
@@ -650,18 +764,44 @@ export default function SafetyReportPage() {
               multiple
               required
             />
-                        {files.length > 0 && (
+            {files.length > 0 && (
+              <div className="sort-controls">
+                <button type="button" onClick={handleToggleSort} disabled={isLoading}>
+                  排序: {sortMode === "original" ? "原始" : sortMode === "asc" ? "核查日期↑" : "核查日期↓"}
+                </button>
+              </div>
+            )}
+            {files.length > 0 && (
               <div className="file-list">
                 <p>已选择文件 ({files.length}):</p>
                 <div className="file-names-container">
-                  {files.map((file, index) => (
-                    <div key={index} className="file-item-simple">
-                      <div className="file-name">{file.name}</div>
-                      <div className="file-date">
-                        实际核查日期: {getFileActualDate(file)}
+                  {(displayOrder.length ? displayOrder : files.map((_, i) => i)).map((origIndex) => {
+                    const file = files[origIndex];
+                    return (
+                      <div
+                        key={origIndex}
+                        className="file-item-simple"
+                        draggable
+                        onDragStart={() => onDragStart(origIndex)}
+                        onDragOver={onDragOver}
+                        onDrop={() => onDropOverItem(origIndex)}
+                      >
+                        <div className="drag-handle" title="拖拽排序" />
+                        <div className="file-name">{file.name}</div>
+                        <div className="file-date">
+                          <label>
+                            实际核查日期:
+                            <input
+                              type="date"
+                              value={actualDates[origIndex] || getFileActualDate(file)}
+                              onChange={(e) => handleDateChange(origIndex, e.target.value)}
+                              disabled={isLoading}
+                            />
+                          </label>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -680,135 +820,75 @@ export default function SafetyReportPage() {
         )}
 
         {responses.length > 0 && (
-          <div className="actions">
+          <div className="actions toolbar-actions">
             <button
               className="excel-download-btn"
               onClick={downloadExcelFile}
-              disabled={
-                !responses.some((r) => r.status === "completed")
-              }
+              disabled={!responses.some((r) => r.status === "completed")}
             >
               📊 下载Excel文件
             </button>
             <button
-              onClick={copyAnnex1ToClipboard}
-              disabled={
-                !responses.some((r) => r.annex1 && r.status === "completed")
-              }
+              type="button"
+              className={`smart-sort-btn ${smartSortActive ? 'active' : ''}`}
+              onClick={() => setSmartSortActive((s) => !s)}
             >
-              {copiedAnnex1 ? "已复制所有附件1!" : "复制所有附件1"}
-            </button>
-            <button
-              onClick={copyAnnex2ToClipboard}
-              disabled={
-                !responses.some((r) => r.annex2 && r.status === "completed")
-              }
-            >
-              {copiedAnnex2 ? "已复制所有附件2!" : "复制所有附件2"}
+              智能排序（按日期内厂中厂分组）
             </button>
           </div>
         )}
 
         <div className="results-container">
-          {responses.map((response, index) => (
-            <div key={index} className="file-result">
-              <div className="file-header">
-                <h3>
-                  {response.fileName}
-                  {renderStatusBadge(response.status, response.error)}
-                </h3>
-              </div>
+          {/* Annex toggle */}
+          <div className="annex-toggle" role="tablist" aria-label="Annex Switcher">
+            <button
+              type="button"
+              className={`annex-toggle-btn ${activeAnnex === "annex1" ? "active" : ""}`}
+              onClick={() => setActiveAnnex("annex1")}
+              role="tab"
+              aria-selected={activeAnnex === "annex1"}
+            >
+              附件1
+            </button>
+            <button
+              type="button"
+              className={`annex-toggle-btn ${activeAnnex === "annex2" ? "active" : ""}`}
+              onClick={() => setActiveAnnex("annex2")}
+              role="tab"
+              aria-selected={activeAnnex === "annex2"}
+            >
+              附件2
+            </button>
+          </div>
 
-              {response.status === "completed" && (
-                <>
-                  <div className="annex-section">
-                    <div className="annex-header">
-                      <h4>附件1: 基本信息</h4>
-                    </div>
-                    <div className="annex-content">
-                      {parseTabData(response.annex1).headers.length > 0 ? (
-                        <div className="table-container">
-                          <table>
-                            <thead>
-                              <tr>
-                                {parseTabData(response.annex1).headers.map(
-                                  (header, i) => (
-                                    <th key={i}>{header}</th>
-                                  )
-                                )}
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {parseTabData(response.annex1).rows.map(
-                                (row, rowIndex) => (
-                                  <tr key={rowIndex}>
-                                    {row.map((cell, cellIndex) => (
-                                      <td key={cellIndex}>{cell}</td>
-                                    ))}
-                                  </tr>
-                                )
-                              )}
-                            </tbody>
-                          </table>
-                        </div>
-                      ) : (
-                        <div className="raw-data">
-                          <h5>原始数据:</h5>
-                          <pre>{response.annex1}</pre>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="annex-section">
-                    <div className="annex-header">
-                      <h4>附件2: 隐患详情</h4>
-                    </div>
-                    <div className="annex-content">
-                      {parseTabData(response.annex2).headers.length > 0 ? (
-                        <div className="table-container">
-                          <table>
-                            <thead>
-                              <tr>
-                                {parseTabData(response.annex2).headers.map(
-                                  (header, i) => (
-                                    <th key={i}>{header}</th>
-                                  )
-                                )}
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {parseTabData(response.annex2).rows.map(
-                                (row, rowIndex) => (
-                                  <tr key={rowIndex}>
-                                    {row.map((cell, cellIndex) => (
-                                      <td
-                                        key={cellIndex}
-                                        className={
-                                          cellIndex === 4 ? "issue-cell" : ""
-                                        }
-                                      >
-                                        {cell}
-                                      </td>
-                                    ))}
-                                  </tr>
-                                )
-                              )}
-                            </tbody>
-                          </table>
-                        </div>
-                      ) : (
-                        <div className="raw-data">
-                          <h5>原始数据:</h5>
-                          <pre>{response.annex2}</pre>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </>
-              )}
-            </div>
-          ))}
+          {/* Consolidated table */}
+          <div className="table-container">
+            <table>
+              <thead>
+                <tr>
+                  {(activeAnnex === "annex1" ? ANNEX1_HEADERS : ANNEX2_HEADERS).map((header, i) => (
+                    <th key={i}>{header}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {getConsolidatedRows(activeAnnex).map((row, rowIndex) => (
+                  <tr key={rowIndex}>
+                    {row.map((cell, cellIndex) => {
+                      if (activeAnnex === "annex2" && cellIndex === 4) {
+                        return (
+                          <td key={cellIndex} className="issue-cell">
+                            {renderIssuesContent(cell)}
+                          </td>
+                        );
+                      }
+                      return <td key={cellIndex}>{cell}</td>;
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
     </div>
